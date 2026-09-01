@@ -1,9 +1,12 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using PhoneBook.Data;
 using PhoneBook.DTOs;
 using PhoneBook.Models;
 
@@ -15,11 +18,16 @@ namespace PhoneBook.Controllers
     {
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly IConfiguration _configuration;
+        private readonly AppDbContext _context;
 
-        public AuthController(UserManager<ApplicationUser> userManager, IConfiguration configuration)
+        public AuthController(
+            UserManager<ApplicationUser> userManager,
+            IConfiguration configuration,
+            AppDbContext context)
         {
             _userManager = userManager;
             _configuration = configuration;
+            _context = context;
         }
 
         // POST: api/auth/register
@@ -63,17 +71,52 @@ namespace PhoneBook.Controllers
             if (!passwordValid)
                 return Unauthorized(new { message = "Invalid email or password" });
 
-            var token = GenerateJwtToken(user);
+            var accessToken = GenerateAccessToken(user);
+            var refreshToken = await GenerateAndSaveRefreshToken(user);
 
             return Ok(new
             {
-                token = token,
+                accessToken = accessToken,
+                refreshToken = refreshToken,
                 email = user.Email,
                 expiration = DateTime.UtcNow.AddMinutes(Convert.ToDouble(_configuration["Jwt:ExpireMinutes"]))
             });
         }
 
-        private string GenerateJwtToken(ApplicationUser user)
+        // POST: api/auth/refresh
+        [HttpPost("refresh")]
+        public async Task<IActionResult> Refresh([FromBody] RefreshTokenRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.RefreshToken))
+                return BadRequest(new { message = "Refresh token is required" });
+
+            var storedToken = await _context.RefreshTokens
+                .Include(rt => rt.User)
+                .FirstOrDefaultAsync(rt => rt.Token == request.RefreshToken);
+
+            if (storedToken == null || storedToken.IsRevoked || storedToken.ExpiresAt < DateTime.UtcNow)
+                return Unauthorized(new { message = "Invalid or expired refresh token" });
+
+            // Revoke the old refresh token (simple rotation)
+            storedToken.IsRevoked = true;
+            await _context.SaveChangesAsync();
+
+            var user = storedToken.User;
+            if (user == null)
+                return Unauthorized(new { message = "User not found" });
+
+            var newAccessToken = GenerateAccessToken(user);
+            var newRefreshToken = await GenerateAndSaveRefreshToken(user);
+
+            return Ok(new
+            {
+                accessToken = newAccessToken,
+                refreshToken = newRefreshToken,
+                expiration = DateTime.UtcNow.AddMinutes(Convert.ToDouble(_configuration["Jwt:ExpireMinutes"]))
+            });
+        }
+
+        private string GenerateAccessToken(ApplicationUser user)
         {
             var claims = new[]
             {
@@ -95,5 +138,30 @@ namespace PhoneBook.Controllers
 
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
+
+        private async Task<string> GenerateAndSaveRefreshToken(ApplicationUser user)
+        {
+            var refreshToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+
+            var tokenEntity = new RefreshToken
+            {
+                Token = refreshToken,
+                UserId = user.Id,
+                ExpiresAt = DateTime.UtcNow.AddDays(7), // 7 days validity
+                CreatedAt = DateTime.UtcNow,
+                IsRevoked = false
+            };
+
+            _context.RefreshTokens.Add(tokenEntity);
+            await _context.SaveChangesAsync();
+
+            return refreshToken;
+        }
+    }
+
+    // Simple request model for refresh endpoint
+    public class RefreshTokenRequest
+    {
+        public string RefreshToken { get; set; } = string.Empty;
     }
 }

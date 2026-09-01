@@ -10,7 +10,7 @@ namespace PhoneBook.Data
             : base(options)
         {
         }
-
+        public DbSet<RefreshToken> RefreshTokens { get; set; } = null!;
         public DbSet<Contact> Contacts { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -21,6 +21,12 @@ namespace PhoneBook.Data
                 .HasOne(c => c.User)
                 .WithMany()
                 .HasForeignKey(c => c.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<RefreshToken>()
+                .HasOne(rt => rt.User)
+                .WithMany()
+                .HasForeignKey(rt => rt.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
         }
     }
