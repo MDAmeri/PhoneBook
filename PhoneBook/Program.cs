@@ -5,13 +5,14 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using PhoneBook.Data;
 using PhoneBook.Models;
+using PhoneBook.Profiles;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
-builder.Services.AddAutoMapper(typeof(Program));
+builder.Services.AddAutoMapper(cfg => cfg.AddProfile<MappingProfile>());
 builder.Services.AddEndpointsApiExplorer();
 
 // Swagger with JWT support

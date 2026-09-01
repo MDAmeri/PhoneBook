@@ -34,15 +34,24 @@ namespace PhoneBook.Controllers
         [HttpGet]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        public async Task<ActionResult<IEnumerable<ContactDto>>> GetContacts([FromQuery] string? search = null)
+        public async Task<ActionResult<PagedResult<ContactDto>>> GetContacts(
+            [FromQuery] string? search = null,
+            [FromQuery] int pageNumber = 1,
+            [FromQuery] int pageSize = 10)
         {
             var userId = GetCurrentUserId();
             if (string.IsNullOrEmpty(userId))
                 return Unauthorized();
 
+
+            if (pageNumber < 1) pageNumber = 1;
+            if (pageSize < 1) pageSize = 10;
+            if (pageSize > 50) pageSize = 50;
+
             var query = _context.Contacts
                 .Where(c => c.UserId == userId)
                 .AsQueryable();
+
 
             if (!string.IsNullOrWhiteSpace(search))
             {
@@ -53,11 +62,23 @@ namespace PhoneBook.Controllers
                     (c.HomeNumber != null && c.HomeNumber.Contains(search)));
             }
 
+
+            var totalCount = await query.CountAsync();
+
+
             var contacts = await query
                 .OrderBy(c => c.FullName)
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
                 .ToListAsync();
 
-            var result = _mapper.Map<List<ContactDto>>(contacts);
+            var result = new PagedResult<ContactDto>
+            {
+                Items = _mapper.Map<List<ContactDto>>(contacts),
+                PageNumber = pageNumber,
+                PageSize = pageSize,
+                TotalCount = totalCount
+            };
 
             return Ok(result);
         }
